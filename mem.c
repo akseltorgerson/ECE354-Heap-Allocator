@@ -7,7 +7,6 @@
 #include <string.h>
 #include "mem.h"
 
-
 #define A_BIT_MASK		0x0001
 #define P_BIT_MASK		0x0002
 #define SIZE_MASK		(~(A_BIT_MASK | P_BIT_MASK))
@@ -16,8 +15,9 @@
 #define BLK_HDR_ALLOC(header)	(header->size_status & A_BIT_MASK)
 #define BLK_HDR_PREV(header)	(header->size_status & P_BIT_MASK)
 
-#define NEXT_HDR_DIST(header)	(BLK_HDR_SIZE(header) / sizeof(block_header))
-#define NEXT_HEADER(header)	(header + NEXT_HDR_DIST(header))
+#define NEXT_HEADER(header)	(header + (BLK_HDR_SIZE(header) / sizeof(block_header)))
+#define GET_FOOTER(header) 	(NEXT_HEADER(header) - 1)
+
 #define IS_END_MARK(header)	(header->size_status == 1)
 
 /*
@@ -100,20 +100,17 @@ void* Alloc_Mem(int size) {
 			/* IF THE BLOCK IS PERFECT SIZE */
 			if (BLK_HDR_SIZE(curr) == size){
 
-				/* CONSIDER MAKING THIS A FUNCTION TO AVOID REDUNDANCY */
-				block_header *next_header = NEXT_HEADER(curr);
 				curr->size_status |= A_BIT_MASK;
 
-				/** check the previous block **/
-				if(!(IS_END_MARK(next_header))){
-					next_header->size_status |= P_BIT_MASK;
+				/** check the next block **/
+				if(!IS_END_MARK(NEXT_HEADER(curr))){
+					NEXT_HEADER(curr)->size_status |= P_BIT_MASK;
 				}
 
 				/** if its the first block must also set p bit to 1 **/
 				if(curr == start_block){
 					curr->size_status |= P_BIT_MASK;
 				}
-				/* THIS ^^^^ COULD ALL BE A FUNCTION */
 
 				/** return the current pointer plus 1 block_header which is a pointer to the start of the data **/
 				return curr + 1;
@@ -139,7 +136,7 @@ void* Alloc_Mem(int size) {
 	remainder = BLK_HDR_SIZE(best) - size;
 	next = best + (size / sizeof(block_header));
 	next->size_status = ((remainder | P_BIT_MASK) & ~(A_BIT_MASK));
-	(next + (remainder / sizeof(block_header)) - 1)->size_status = remainder & SIZE_MASK;
+	GET_FOOTER(next)->size_status = BLK_HDR_SIZE(next);
 
 	/* NOW SET UP THE BLOCK WE JUST CHOSE TO BE ALLOCATED */
 	 best->size_status = size | (best->size_status & (A_BIT_MASK | P_BIT_MASK));
@@ -171,51 +168,38 @@ void* Alloc_Mem(int size) {
  * - Update header(s) and footer as needed.
  */                    
 int Free_Mem(void *ptr) {         
-    
-	block_header *header, *adj_header;
+    	
+	block_header *header, *next, *prev;
 	
 	/* IF PTR IS NULL OR NOT A MULTIPLE OF */
 	if(ptr == NULL) return -1;
 	if((int)ptr % 8 != 0) return -1;
 	
-	/* PTR IS A POINTER TO THE START OF THE PAYLOAD, NEED TO SUBTRACT A BLOCK HEADER TO
-	 * GET TO THE HEADER */
+	/* PTR IS A POINTER TO THE START OF THE PAYLOAD, NEED TO SUBTRACT A BLOCK HEADER TO GET TO THE HEADER */
 	header = ptr - sizeof(block_header);
+	next = NEXT_HEADER(header);
 
 	/* IF ITS NOT ALLOCATED RETURN -1 BECAUSE IT IS ALREADY FREE */
 	if(!BLK_HDR_ALLOC(header)) return -1;
-	// changed
 
-
-	/* PREPARE THE CURRENT BLOCK TO BE FREE */
+	/* FREE UP BLOCK */	
 	header->size_status &= ~A_BIT_MASK;
+	next->size_status &= ~P_BIT_MASK;
+	GET_FOOTER(header)->size_status = BLK_HDR_SIZE(header);
 
-	/* SET THE PREVIOUS BIT OF THE NEXT BLOCK TO FREE */
-	if(!IS_END_MARK(NEXT_HEADER(header))) {
-		NEXT_HEADER(header)->size_status &= ~P_BIT_MASK;
-	}
-	
-	/* SET OUR FOOTER BLOCK */
-	(NEXT_HEADER(header) - 1)->size_status &= SIZE_MASK;
-
-
-	// --------------- THINK COALESCE IS BUGGY ------------------- //
-
-	/* ATTEMPT TO COALESCE WITH NEXT BLOCK */
-	adj_header =  NEXT_HEADER(header);
-	if(!IS_END_MARK(adj_header) && (!BLK_HDR_ALLOC(adj_header))) {
-		header->size_status += adj_header->size_status;
-		(header + ((header->size_status / sizeof(block_header)) - 1))->size_status = BLK_HDR_SIZE(header);
+	/* ATTEMPT TO COALESCE WITH NEXT BLOCK */	
+	if(!BLK_HDR_ALLOC(next) && !IS_END_MARK(next)) {
+		header->size_status = header->size_status + next->size_status;
+		GET_FOOTER(header)->size_status = BLK_HDR_SIZE(header);
 	}
 
-	/* ATTEMPT TO COALESCE WITH PREV BLOCK */
-	if(!BLK_HDR_PREV(header)){
-		adj_header = header - ((header - 1)->size_status / sizeof(block_header));
-		adj_header->size_status += header->size_status;
-		(header + ((header->size_status / sizeof(block_header)) - 1))->size_status = BLK_HDR_SIZE(adj_header);
-	}
-	
-	 /* attempt coalesce with prev */
+	/* ATTEMPT TO COALESCE WITH PREVIOUS BLOCK */
+	if(!BLK_HDR_PREV(header)) {
+		prev = header - (((header - 1)->size_status) / sizeof(block_header));
+		prev->size_status += header->size_status;
+		GET_FOOTER(prev)->size_status = BLK_HDR_SIZE(prev);  
+	}	
+
 	return 0;
 
 }
