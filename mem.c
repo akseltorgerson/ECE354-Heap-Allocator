@@ -8,13 +8,14 @@
 #include "mem.h"
 
 
-
 #define A_BIT_MASK		0x0001
 #define P_BIT_MASK		0x0002
 #define SIZE_MASK		(~(A_BIT_MASK | P_BIT_MASK))
+
 #define BLK_HDR_SIZE(header)	(header->size_status & SIZE_MASK)
 #define BLK_HDR_ALLOC(header)	(header->size_status & A_BIT_MASK)
 #define BLK_HDR_PREV(header)	(header->size_status & P_BIT_MASK)
+
 #define NEXT_HDR_DIST(header)	(BLK_HDR_SIZE(header) / sizeof(block_header))
 #define NEXT_HEADER(header)	(header + NEXT_HDR_DIST(header))
 #define IS_END_MARK(header)	(header->size_status == 1)
@@ -88,7 +89,9 @@ void* Alloc_Mem(int size) {
 	if (size <= 0 ) {return NULL;} 
 
 	// round to the nearest multiple of 8
-	size += 8 - (size % 8);
+	if(size % 8 != 0) {
+		size += 8 - (size % 8);
+	}
 
 	// Loop through the entire heap to find the best fit location
 	while(!IS_END_MARK(curr)){
@@ -123,14 +126,13 @@ void* Alloc_Mem(int size) {
 			}
 			
 		}
-			/* GET THE NEXT BLOCK */
-			curr = NEXT_HEADER(curr);	
+		/* GET THE NEXT BLOCK */
+		curr = NEXT_HEADER(curr);	
 	}
 	/* IF WE GET HERE AND BEST IS STILL NULL THEN THERE ARE NO SUFFICIENT BLOCKS */
 	if(best == NULL){
 		return NULL;
 	}		
-
 
 
 	/* SINCE WE DID NOT FIND A PERFECT SIZE BLOCK THERE WILL BE A REMAINING BLOCK */
@@ -153,6 +155,7 @@ void* Alloc_Mem(int size) {
 		
 	 return best + 1;
 }
+
 
 /* 
  * Function for freeing up a previously allocated block.
@@ -180,7 +183,9 @@ int Free_Mem(void *ptr) {
 	header = ptr - sizeof(block_header);
 
 	/* IF ITS NOT ALLOCATED RETURN -1 BECAUSE IT IS ALREADY FREE */
-	if(BLK_HDR_ALLOC(header) != 1) return -1;
+	if(!BLK_HDR_ALLOC(header)) return -1;
+	// changed
+
 
 	/* PREPARE THE CURRENT BLOCK TO BE FREE */
 	header->size_status &= ~A_BIT_MASK;
@@ -193,20 +198,28 @@ int Free_Mem(void *ptr) {
 	/* SET OUR FOOTER BLOCK */
 	(NEXT_HEADER(header) - 1)->size_status &= SIZE_MASK;
 
+
+	// --------------- THINK COALESCE IS BUGGY ------------------- //
+
 	/* ATTEMPT TO COALESCE WITH NEXT BLOCK */
-	if(!IS_END_MARK(NEXT_HEADER(header)) && (BLK_HDR_ALLOC(NEXT_HEADER(header)) != 1)) {
-		header->size_status += NEXT_HEADER(header)->size_status;
-		(header + (header->size_status / sizeof(block_header) - 1))->size_status = BLK_HDR_SIZE(header);
+	adj_header =  NEXT_HEADER(header);
+	if(!IS_END_MARK(adj_header) && (!BLK_HDR_ALLOC(adj_header))) {
+		header->size_status += adj_header->size_status;
+		(header + ((header->size_status / sizeof(block_header)) - 1))->size_status = BLK_HDR_SIZE(header);
 	}
 
 	/* ATTEMPT TO COALESCE WITH PREV BLOCK */
-	if(BLK_HDR_PREV(header) != 2){
+	if(!BLK_HDR_PREV(header)){
 		adj_header = header - ((header - 1)->size_status / sizeof(block_header));
 		adj_header->size_status += header->size_status;
-		(header - 1)->size_status = BLK_HDR_SIZE(adj_header);
-	}	
+		(header + ((header->size_status / sizeof(block_header)) - 1))->size_status = BLK_HDR_SIZE(adj_header);
+	}
+	
+	 /* attempt coalesce with prev */
 	return 0;
+
 }
+
 
 /*
  * Function used to initialize the memory allocator.

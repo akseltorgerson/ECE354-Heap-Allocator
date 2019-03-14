@@ -32,5 +32,8 @@ int main() {
    ptr[2] = Alloc_Mem(1800);
    assert(ptr[2] != NULL);
 
+   Free_Mem(ptr[2]);
+
+
    exit(0);
 }
